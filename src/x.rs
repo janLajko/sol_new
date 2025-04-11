@@ -1,118 +1,105 @@
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use std::error::Error;
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-/// Struct to hold detailed token information
-pub struct TokenInfo {
-    pub name: String,
-    pub symbol: String,
-    pub url: String,
-    pub x_content: String,
-}
+use egg_mode::search::{self, ResultType};
 
-#[derive(Serialize)]
-struct GeminiRequest {
-    contents: Vec<GeminiContent>,
-}
+use std::io::{stdin, BufRead, Write}; 
 
-#[derive(Serialize)]
-struct GeminiContent {
-    parts: Vec<GeminiPart>,
-}
+#[tokio::test]
+async fn test_x() {
+    dotenv::dotenv().ok();
+    let config = load().await.unwrap();
 
-#[derive(Serialize)]
-struct GeminiPart {
-    text: String,
-}
+    println!("Search term:");
+    let line = stdin().lock().lines().next().unwrap().unwrap();
 
-#[derive(Deserialize)]
-struct GeminiResponse {
-    candidates: Vec<GeminiCandidate>,
-}
+    let search = search::search(line)
+        .result_type(ResultType::Recent)
+        .count(10) 
+        .call(&config.token)
+        .await
+        .unwrap();
 
-#[derive(Deserialize)]
-struct GeminiCandidate {
-    content: GeminiResponseContent,
-}
-
-#[derive(Deserialize)]
-struct GeminiResponseContent {
-    parts: Vec<GeminiResponsePart>,
-}
-
-#[derive(Deserialize)]
-struct GeminiResponsePart {
-    text: String,
-}
-
-/// Generate a brief summary about a pump.fun token using Gemini API
-pub async fn generate_token_summary(token: &TokenInfo) -> Result<String, Box<dyn Error>> {
-    let client = Client::new();
-    let api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
-    let api_key = std::env::var("AI_API_KEY").expect("AI_API_KEY not found");
-    
-    // Create the prompt for Gemini
-    let prompt = format!(
-        "Provide a concise two-sentence summary about the '{}' ({}) token from pump.fun. Include relevant information about its purpose and unique features. The token's website is {}. Keep your response brief and factual.",
-        token.name, token.symbol, token.url
-    );
-    
-    // Prepare the request
-    let request = GeminiRequest {
-        contents: vec![GeminiContent {
-            parts: vec![GeminiPart { text: prompt }],
-        }],
-    };
-    
-    // Make the API call
-    let response = client
-        .post(&format!("{}?key={}", api_url, api_key))
-        .json(&request)
-        .send()
-        .await?
-        .json::<GeminiResponse>()
-        .await?;
-    
-    // Extract and return the summary
-    if let Some(candidate) = response.candidates.first() {
-        if let Some(part) = candidate.content.parts.first() {
-            return Ok(part.text.trim().to_string());
-        }
+    for tweet in &search.statuses {
+        println!("{}", tweet.text);
     }
-    
-    Err("Failed to generate summary".into())
 }
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub struct Config {
+    pub token: egg_mode::Token,
+    pub user_id: u64,
+    pub screen_name: String,
+}
+
+/// This needs to be a separate function so we can retry after creating the
+/// twitter_settings file. Idealy we would recurse, but that requires boxing
+/// the output which doesn't seem worthwhile
+async fn load() -> Option<Config> {
+    //IMPORTANT: make an app for yourself at apps.twitter.com and get your
+    //key/secret into these files; these examples won't work without them
+    let consumer_key = std::env::var("CK").expect("consumer_key not found");
+    let consumer_secret = std::env::var("CS").expect("consumer_secret not found");
+
+    let con_token = egg_mode::KeyPair::new(consumer_key, consumer_secret);
+
+    let mut config = String::new();
+    let user_id: u64;
+    let username: String;
+    let token: egg_mode::Token;
+
+    //look at all this unwrapping! who told you it was my birthday?
     
-    #[tokio::test]
-    async fn test_generate_token_summary_real_request() {
-        dotenv::dotenv().ok();
-        // Create a test token
-        let token = TokenInfo {
-            name: "PEPE".to_string(),
-            symbol: "PEPE".to_string(),
-            url: "https://pepe.pump.fun".to_string(),
-            x_content: "".to_string(),
-        };
-        
-        // Call the actual function with a real API request
-        let result = generate_token_summary(&token).await;
-        
-        // Verify the result is Ok and contains some text
-        assert!(result.is_ok(), "API request failed: {:?}", result.err());
-        
-        let summary = result.unwrap();
-        
-        // Basic validation of the response
-        assert!(!summary.is_empty(), "Summary should not be empty");
-        println!("Generated summary: {}", summary);
-        
-        // Optional: Additional assertions about the content
-        assert!(summary.contains("PEPE") || summary.contains("pepe"), 
-                "Summary should mention the token name");
+    let request_token = egg_mode::auth::request_token(&con_token, "oob")
+        .await
+        .unwrap();
+
+    println!("Go to the following URL, sign in, and give me the PIN that comes back:");
+    println!("{}", egg_mode::auth::authorize_url(&request_token));
+
+    let mut pin = String::new();
+    std::io::stdin().read_line(&mut pin).unwrap();
+    println!("");
+
+    let tok_result = egg_mode::auth::access_token(con_token, &request_token, pin)
+        .await
+        .unwrap();
+
+    token = tok_result.0;
+    user_id = tok_result.1;
+    username = tok_result.2;
+
+    match token {
+        egg_mode::Token::Access {
+                access: ref access_token,
+                ..
+            } => {
+                config.push_str(&username);
+                config.push('\n');
+                config.push_str(&format!("{}", user_id));
+                config.push('\n');
+                config.push_str(&access_token.key);
+                config.push('\n');
+                config.push_str(&access_token.secret);
+            }
+            _ => unreachable!(),
+    }
+
+    let mut f = std::fs::File::create("twitter_settings").unwrap();
+    f.write_all(config.as_bytes()).unwrap();
+
+    println!("Welcome, {}, let's get this show on the road!", username);
+    
+
+    //TODO: Is there a better way to query whether a file exists?
+    if std::fs::metadata("twitter_settings").is_ok() {
+        Some(Config {
+            token: token,
+            user_id: user_id,
+            screen_name: username, 
+        })
+    } else {
+        None
     }
 }
