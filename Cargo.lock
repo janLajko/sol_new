@@ -3885,6 +3885,7 @@ dependencies = [
  "solana-transaction-status-client-types",
  "spl-associated-token-account 6.0.0",
  "spl-token 7.0.0",
+ "thiserror 2.0.12",
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tracing",
