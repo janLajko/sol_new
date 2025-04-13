@@ -26,7 +26,7 @@ pub enum TwitterError {
 }
 
 /// Represents a single tweet
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct Tweet {
     pub tweet_id: String,
     pub user_id: String,
@@ -60,7 +60,7 @@ pub struct Tweet {
 }
 
 /// Represents a Twitter user
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, Clone)]
 pub struct User {
     pub id_str: String,
     pub name: String,
@@ -102,14 +102,14 @@ pub type Result<T> = std::result::Result<T, TwitterError>;
 
 /// Twitter API client
 #[derive(Debug, Clone)]
-pub struct Client {
+pub struct XClient {
     base_url: String,
     http_client: ReqwestClient,
     max_retries: u8,
     api_key: Option<String>,
 }
 
-impl Client {
+impl XClient {
     /// Create a new Twitter API client
     pub fn new(base_url: &str) -> Self {
         Self {
@@ -170,7 +170,7 @@ impl Client {
         let mut last_error = None;
         
         // Try up to max_retries times with immediate retry
-        for attempt in 0..self.max_retries {
+        for _attempt in 0..self.max_retries {
             match self.do_request_with_params(&url, &params).await {
                 Ok(response) => return Ok(response),
                 Err(e) => {
@@ -207,7 +207,7 @@ impl Client {
         let mut last_error = None;
         
         // Try up to max_retries times with immediate retry
-        for attempt in 0..self.max_retries {
+        for _attempt in 0..self.max_retries {
             match self.do_request_with_params(&url, &params).await {
                 Ok(response) => return Ok(response),
                 Err(e) => {
@@ -260,6 +260,7 @@ impl Client {
     }
     
     /// Execute HTTP request and parse response
+    #[allow(dead_code)]
     async fn do_request(&self, url: &str) -> Result<TwitterResponse> {
         self.do_request_with_params(url, &[]).await
     }
@@ -288,6 +289,13 @@ impl Client {
     }
 }
 
+pub fn get_x_instance() -> XClient {
+    use std::env;
+    dotenv::dotenv().expect("Failed to load .env file");
+    let api_key = env::var("X_API_KEY").expect("X_API_KEY not found");
+    XClient::new("https://api.apidance.pro/sapi").with_api_key(api_key.as_str())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,7 +311,7 @@ mod tests {
         let api_key = env::var("X_API_KEY").expect("X_API_KEY not found");
         
         // Create a client with the correct API base URL and API key
-        let client = Client::new("https://api.apidance.pro/sapi")
+        let client = XClient::new("https://api.apidance.pro/sapi")
             .with_api_key(api_key.as_str());
         
         // Execute a search request with the specified parameters

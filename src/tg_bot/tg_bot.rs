@@ -20,6 +20,7 @@ pub struct TokenDetails {
     pub symbol: String,
     pub url: String,
     pub ai_analysis: String,
+    pub ai_from_x_url: String,
     pub market_cap: String,
     pub creator: String, 
     pub launch_time: String,
@@ -85,58 +86,74 @@ impl BotInstance {
         }
     }
 
-    /// Send a detailed coin alert for a new token on Pump.fun
     pub async fn send_coin_alert(
         &self,
         token_details: &TokenDetails,
     ) -> Result<(), ErrorResult> {
-        // Build a message in MarkdownV2 format with rich token information
         let markdown_message = format!(
             r#"🚀 *New Pump\.fun Token Alert\!* 🚀
 
-*Token:* `{token_name}` *\({symbol}\)*
-*Mint Address:* `{mint_address}`
+💎 *Token Details*
+• *Name:* `{token_name}`
+• *Symbol:* `{symbol}`
+• *Mint:* `{mint_address}`
 
-📈 *Token Metrics:* 
+📊 *Market Info*
 • *Market Cap:* `${market_cap}`
-• *Created By:* `{creator}`
-• *Launch Time:* `{launch_time}`
+• *Creator:* `{creator}`
+• *Launch:* `{launch_time}`
 
-🌐 *Links:*
-• [PumpFun Chart](https://pump.fun/{mint_address})
+🔗 *Links*
+• [Chart on Pump\.fun](https://pump.fun/{mint_address})
+• [Related COIN CA X URL]({x_url}) 
 
-💡 *AI Analysis:* 
+🤖 *AI Analysis* 
 {ai_analysis}
 
-⚠️ *Disclaimer:* DYOR\. High Risk Investment\!"#,
+⚠️ *DYOR \| High Risk Investment*"#,
             token_name = escape_markdown(&token_details.name),
             symbol = escape_markdown(&token_details.symbol),
             mint_address = escape_markdown(&token_details.mint_address),
             market_cap = escape_markdown(&token_details.market_cap),
             creator = escape_markdown(&token_details.creator),
             launch_time = escape_markdown(&token_details.launch_time),
+            x_url = if token_details.ai_from_x_url.is_empty() { "".to_string() } else { format!("https://twitter.com/x/status/{}", escape_markdown(&token_details.ai_from_x_url)) },
             ai_analysis = escape_markdown(&token_details.ai_analysis)
         );
 
-        // Check message length and send
         if markdown_message.len() > 4096 {
-            // If the message is too long, split it into multiple messages
-            for (i, chunk) in markdown_message.chars().collect::<Vec<char>>().chunks(4000).enumerate() {
-                let chunk_str: String = chunk.iter().collect();
-                let chunk_message = if i == 0 {
-                    chunk_str
+            let chunks: Vec<&str> = markdown_message.split("\n\n").collect();
+            let mut current_chunk = String::new();
+
+            for chunk in chunks {
+                if (current_chunk.len() + chunk.len() + 2) > 4000 {
+                    self.send_message_async(&current_chunk, Some(SendMessageOption { 
+                        parse_mode: Some(SendMessageParseMode::MarkdownV2) 
+                    })).await?;
+                    current_chunk = chunk.to_string();
                 } else {
-                    format!("*Continued:*\n\n{}", chunk_str)
-                };
-                self.send_message_async(&chunk_message, Some(SendMessageOption { parse_mode: Some(SendMessageParseMode::MarkdownV2) })).await?;
+                    if !current_chunk.is_empty() {
+                        current_chunk.push_str("\n\n");
+                    }
+                    current_chunk.push_str(chunk);
+                }
+            }
+
+            if !current_chunk.is_empty() {
+                self.send_message_async(&current_chunk, Some(SendMessageOption { 
+                    parse_mode: Some(SendMessageParseMode::MarkdownV2) 
+                })).await?;
             }
         } else {
-            // Send a single message
-            self.send_message_async(&markdown_message, Some(SendMessageOption { parse_mode: Some(SendMessageParseMode::MarkdownV2) })).await?;
+            self.send_message_async(&markdown_message, Some(SendMessageOption { 
+                parse_mode: Some(SendMessageParseMode::MarkdownV2) 
+            })).await?;
         }
 
         Ok(())
     }
+
+
 }
 
 /// Escaping special characters in MarkdownV2
@@ -184,6 +201,7 @@ mod test {
             symbol: "CMT".to_string(),
             url: "https://pump.fun/token".to_string(),
             ai_analysis: "This token shows potential for growth due to its unique market positioning.".to_string(),
+            ai_from_x_url: "https://twitter.com/x/status/1234567890".to_string(),
             market_cap: "50,000".to_string(),
             creator: "0x1234...5678".to_string(),
             launch_time: "2024-04-11 12:00 UTC".to_string(),

@@ -4,7 +4,7 @@ use redis::{aio::MultiplexedConnection, AsyncCommands, RedisResult};
 use solana_sdk::timing::timestamp;
 use tracing::info;
 
-use crate::{constants::MARKET_CAP, tg_bot::{tg_bot::TokenDetails, tg_bot_type::BotInstance}, types::CreateEvent};
+use crate::{ai::{generate_token_summary, TokenInfo}, constants::MARKET_CAP, tg_bot::{tg_bot::TokenDetails, tg_bot_type::BotInstance}, types::CreateEvent, utils::format_timestamp_to_et, x::{Tweet, XClient}};
 const TOKEN_SET_KEY: &str = "token_info_set";
 
 // ! blockhash 相关
@@ -40,7 +40,7 @@ pub async fn update_mk(
     }
 }
 
-pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance) -> RedisResult<()> {
+pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x_instance: XClient) -> RedisResult<()> {
     // 获取所有数据
     match conn
         .hgetall::<'_, _, HashMap<String, String>>(TOKEN_SET_KEY)
@@ -90,16 +90,33 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance) -
                         splits[6],
                         splits[7],
                     );
+
+                    // get token x info
+                    let x_info = if let Ok(x_infos) = x_instance.search_tweets(&mint, None, Some("Top")).await {
+                        x_infos.tweets.first().unwrap().clone()
+                    } else {
+                        Tweet::default()
+                    };
+
+                    // get token ai summary
+                    let summary = generate_token_summary(&TokenInfo {
+                        url: uri.to_string(),
+                        name: name.to_string(),
+                        symbol: symbol.to_string(),
+                        x_content: x_info.text,
+                    }).await.expect("Failed to get token summary");
+                   
                     // send coin alert
                     let token_details = TokenDetails {
-                        mint_address: mint.to_string(),
+                        mint_address: mint.to_string(),   
                         name: name.to_string(),
                         symbol: symbol.to_string(),
                         url: uri.to_string(),
-                        ai_analysis: "".to_string(),
+                        ai_analysis: summary,
+                        ai_from_x_url: x_info.tweet_id,
                         market_cap: mk.to_string(),
                         creator: user.to_string(),
-                        launch_time: create_time.to_string(),
+                        launch_time: format_timestamp_to_et(create_time),
                     };
                     let _ = instance.send_coin_alert(&token_details).await;
                 }
@@ -111,6 +128,16 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance) -
     }
 }
 
+
+// 在Redis中存储已发送消息的代币标记
+pub async fn mark_token_alert_sent(conn: &mut MultiplexedConnection, mint: &str) -> RedisResult<()> {
+    conn.set(format!("token_alert_sent:{}", mint), 1).await
+}
+
+pub async fn is_token_alert_sent(conn: &mut MultiplexedConnection, mint: &str) -> RedisResult<bool> {
+    conn.exists(format!("token_alert_sent:{}", mint)).await
+}
+
 #[cfg(test)]
 mod test {
     use std::{thread::sleep, time::Duration};
@@ -118,7 +145,7 @@ mod test {
     use solana_sdk::pubkey::Pubkey;
 
     use crate::{
-        cache::{add_token_info, check_mk, update_mk}, constants::REDIS_URL, tg_bot::tg_bot::get_instance, types::CreateEvent
+        cache::{add_token_info, check_mk, update_mk}, constants::REDIS_URL, tg_bot::tg_bot::get_instance, types::CreateEvent, x::get_x_instance
     };
 
     #[tokio::test]
@@ -147,7 +174,7 @@ mod test {
 
         // 3. 停顿后检查
         sleep(Duration::from_secs(11));
-        check_mk(&mut con, instance).await?;
+        check_mk(&mut con, instance, get_x_instance()).await?;
 
         Ok(())
     }

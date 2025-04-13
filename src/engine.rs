@@ -18,7 +18,7 @@ use crate::{
         GRPC, PUMPFUN_PROGRAM_ID, REDIS_URL, RPC,
     }, tg_bot::tg_bot::get_instance, types::TargetEvent, utils::{
         cal_pumpfun_marketcap, cal_pumpfun_price, convert_to_encoded_tx,
-    }
+    }, x::get_x_instance
 };
 use anyhow::{Context, Result};
 
@@ -51,6 +51,8 @@ impl Monitor {
         // grpc
         let grpc_url = GRPC.to_string();
         let tg_instance = get_instance();
+        let x_instance = get_x_instance();
+        
         let grpc = GrpcClient::new(grpc_url);
         let mut stream = grpc
             .subscribe_transaction(
@@ -85,7 +87,7 @@ impl Monitor {
                             .exec_async(&mut conn)
                             .await?;
                         if block_times == 100 {
-                            check_mk(&mut conn, tg_instance.clone()).await?;
+                            check_mk(&mut conn, tg_instance.clone(), x_instance.clone()).await?;
                             block_times = 0;
                         }
                     }

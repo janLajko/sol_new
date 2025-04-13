@@ -1,6 +1,8 @@
 use std::{str::FromStr, time::Duration};
 
 use anyhow::{anyhow, Result};
+use chrono::{TimeZone, Utc};
+use chrono_tz::America::New_York;
 use reqwest::Client;
 use serde_json::Value;
 use solana_sdk::pubkey::Pubkey;
@@ -63,4 +65,11 @@ pub fn find_bonding_curve(mint: &Pubkey) -> Pubkey {
         &PUMPFUN_PROGRAM_ID,
     )
     .0
+}
+
+pub fn format_timestamp_to_et(timestamp_ms: u64) -> String {
+    let seconds = (timestamp_ms / 1000) as i64;
+    let dt = Utc.timestamp_opt(seconds, 0).unwrap();
+    let et = dt.with_timezone(&New_York);   
+    et.format("%Y-%m-%d %I:%M %p ET").to_string()
 }
