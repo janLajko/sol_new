@@ -45,26 +45,31 @@ struct GeminiResponsePart {
     text: String,
 }
 
-/// Generate a brief summary about a pump.fun token using Gemini API
 pub async fn generate_token_summary(token: &TokenInfo) -> Result<String, Box<dyn Error>> {
     let client = Client::new();
     let api_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
     let api_key = std::env::var("AI_API_KEY").expect("AI_API_KEY not found");
-
-    // Create the prompt for Gemini, focusing on investment potential and social media characteristics
-    let prompt = format!(
-        "Provide a two-sentence investment analysis of the '{}' ({}) token, distilling its market potential from the ticker symbolism and X (Twitter) content: '{}'. 
-        Offer a concise, objective perspective on its brand positioning, market dynamics, and potential investment attractiveness.",
-        token.name, token.symbol, token.x_content
-    );
-
+    
+    // Create a flexible prompt that can work with or without X content
+    let prompt = if token.x_content.is_empty() {
+        format!(
+            "Provide a two-sentence investment analysis of the '{}' ({}) token based solely on its ticker symbol characteristics. Offer a concise, objective perspective on its potential market positioning and dynamics without mentioning investment risks.",
+            token.name, token.symbol
+        )
+    } else {
+        format!(
+            "Provide a two-sentence investment analysis of the '{}' ({}) token, using both its ticker symbol and X (Twitter) content: '{}'. Offer a concise, objective perspective on its brand positioning and market dynamics without including risk disclaimers.",
+            token.name, token.symbol, token.x_content
+        )
+    };
+    
     // Prepare the request
     let request = GeminiRequest {
         contents: vec![GeminiContent {
             parts: vec![GeminiPart { text: prompt }],
         }],
     };
-
+    
     // Make the API call
     let response = client
         .post(&format!("{}?key={}", api_url, api_key))
@@ -73,14 +78,14 @@ pub async fn generate_token_summary(token: &TokenInfo) -> Result<String, Box<dyn
         .await?
         .json::<GeminiResponse>()
         .await?;
-
+    
     // Extract and return the summary
     if let Some(candidate) = response.candidates.first() {
         if let Some(part) = candidate.content.parts.first() {
             return Ok(part.text.trim().to_string());
         }
     }
-
+    
     Err("Failed to generate summary".into())
 }
 

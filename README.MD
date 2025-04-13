@@ -62,8 +62,8 @@ The application can be configured through environment variables in the `.env` fi
 - `RPC_URL`: Solana RPC endpoint
 - `REDIS_URL`: Redis connection URL
 - `MARKET_CAP`: Minimum market cap threshold
-- `CK`: Twitter Consumer Key
-- `CS`: Twitter Consumer Secret
+- `AI_API_KEY`: Gemini API key
+- `X_API_KEY`: X (Twitter) API key
 
 ## License
 

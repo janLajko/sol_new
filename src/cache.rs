@@ -56,7 +56,7 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x
                     splits[2].parse::<u64>().unwrap(),
                 );
 
-                info!("===============> {}|{}|{}", mint, mk, *MARKET_CAP);
+                info!("check token create info: token addr {}, market cap {}, create time {}", mint, mk, create_time);
 
                 // 检查是否是新代币（创建时间不超过10分钟）
                 let is_new_coin = create_time + 600_000 > timestamp();
