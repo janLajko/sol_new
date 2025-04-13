@@ -73,54 +73,70 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x
                     conn.hdel(TOKEN_SET_KEY, mint).await?;
                     tokens_to_exist.remove(&mint.to_string());
                 }
-            } 
+            }
 
-            // 以上都满足则push 到 tg 机器人 
-            // 拉取该代币的创建信息， 同时获取 利用该
-            tokio::spawn(async move {
-                for (mint, info) in tokens_to_exist {
-                    let splits: Vec<_> = info.split("|").collect();
-                    let (_mint, mk, create_time, name, symbol, uri, user, _bonding_curve) = (
-                        splits[0],
-                        splits[1].parse::<f32>().unwrap(),
-                        splits[2].parse::<u64>().unwrap(),
-                        splits[3],
-                        splits[4],
-                        splits[5],
-                        splits[6],
-                        splits[7],
-                    );
-
-                    // get token x info
-                    let x_info = if let Ok(x_infos) = x_instance.search_tweets(&mint, None, Some("Top")).await {
-                        x_infos.tweets.first().unwrap().clone()
-                    } else {
-                        Tweet::default()
-                    };
-
-                    // get token ai summary
-                    let summary = generate_token_summary(&TokenInfo {
-                        url: uri.to_string(),
-                        name: name.to_string(),
-                        symbol: symbol.to_string(),
-                        x_content: x_info.text,
-                    }).await.expect("Failed to get token summary");
-                   
-                    // send coin alert
-                    let token_details = TokenDetails {
-                        mint_address: mint.to_string(),   
-                        name: name.to_string(),
-                        symbol: symbol.to_string(),
-                        url: uri.to_string(),
-                        ai_analysis: summary,
-                        ai_from_x_url: x_info.tweet_id,
-                        market_cap: mk.to_string(),
-                        creator: user.to_string(),
-                        launch_time: format_timestamp_to_et(create_time),
-                    };
-                    let _ = instance.send_coin_alert(&token_details).await;
+            // 准备要处理的代币信息和相关状态
+            let mut tokens_to_process = Vec::new();
+            
+            for (mint, info) in tokens_to_exist {
+                // 检查是否已经发送过警报
+                if !is_token_alert_sent(conn, &mint).await? {
+                    // 标记为已发送
+                    mark_token_alert_sent(conn, &mint).await?;
+                    // 添加到要处理的列表
+                    tokens_to_process.push((mint, info));
                 }
-            });
+            }
+            
+            // 只有在有需要处理的代币时才启动异步任务
+            if !tokens_to_process.is_empty() {
+                tokio::spawn(async move {
+                    for (mint, info) in tokens_to_process {
+                        let splits: Vec<_> = info.split("|").collect();
+                        let (_mint, mk, create_time, name, symbol, uri, user, _bonding_curve) = (
+                            splits[0],
+                            splits[1].parse::<f32>().unwrap(),
+                            splits[2].parse::<u64>().unwrap(),
+                            splits[3],
+                            splits[4],
+                            splits[5],
+                            splits[6],
+                            splits[7],
+                        );
+
+                        // get token x info
+                        let x_info = if let Ok(x_infos) = x_instance.search_tweets(&mint, None, Some("Top")).await {
+                            x_infos.tweets.first().unwrap().clone()
+                        } else {
+                            Tweet::default()
+                        };
+
+                        // get token ai summary
+                        let summary = generate_token_summary(&TokenInfo {
+                            url: uri.to_string(),
+                            name: name.to_string(),
+                            symbol: symbol.to_string(),
+                            x_content: x_info.text,
+                        }).await.expect("Failed to get token summary");
+                       
+                        // send coin alert
+                        let token_details = TokenDetails {
+                            mint_address: mint.to_string(),   
+                            name: name.to_string(),
+                            symbol: symbol.to_string(),
+                            url: uri.to_string(),
+                            ai_analysis: summary,
+                            ai_from_x_url: x_info.tweet_id,
+                            market_cap: mk.to_string(),
+                            creator: user.to_string(),
+                            launch_time: format_timestamp_to_et(create_time),
+                        };
+                        
+                        // 直接发送消息，不需要再次检查是否已发送
+                        let _ = instance.send_coin_alert(&token_details).await;
+                    }
+                });
+            }
 
             Ok(())
         }
