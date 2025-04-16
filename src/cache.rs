@@ -2,46 +2,73 @@ use std::collections::HashMap;
 
 use redis::{aio::MultiplexedConnection, AsyncCommands, RedisResult};
 use solana_sdk::timing::timestamp;
-use tracing::info;
+use tracing::{debug, info};
 
-use crate::{ai::{generate_token_summary, TokenInfo}, constants::MARKET_CAP, tg_bot::{tg_bot::TokenDetails, tg_bot_type::BotInstance}, types::CreateEvent, utils::format_timestamp_to_et, x::{Tweet, XClient}};
+use crate::{ai::{generate_token_summary, TokenInfo}, constants::{MARKET_CAP, NEW_COIN_MAX_TIME, NEW_COIN_MIN_TIME}, tg_bot::{tg_bot::TokenDetails, tg_bot_type::BotInstance}, types::CreateEvent, utils::format_timestamp_to_et, x::{Tweet, XClient}};
 const TOKEN_SET_KEY: &str = "token_info_set";
 
-// ! blockhash 相关
+// ! blockhash
 pub async fn get_block_hash_str(conn: &mut MultiplexedConnection) -> RedisResult<String> {
     redis::cmd("get").arg("blockhash").query_async(conn).await
 }
 
-// ! 代币 相关
 pub async fn add_token_info(
     conn: &mut MultiplexedConnection, 
     create: &CreateEvent,
 ) -> RedisResult<()> {
-    // info = mint|mk|create_time|token_name|token_symbol|token_uri|user|bonding_curve
-    let info = format!("{}|{}|{}|{}|{}|{}|{}|{}", create.mint, 0, timestamp(), create.name, create.symbol, create.uri, create.user.to_string(), create.bonding_curve.to_string());
-    conn.hset(TOKEN_SET_KEY, create.mint.to_string(), info)
+    // info = mint|mk|create_time|token_name|token_symbol|token_uri|user|bonding_curve|pool
+    let info = format!("{}|{}|{}|{}|{}|{}|{}|{}|{}", create.mint, 0, timestamp(), create.name, create.symbol, create.uri, create.user.to_string(), create.bonding_curve.to_string(), "".to_string());
+    let mint = format!("{}", create.mint.to_string());
+
+    info!("create token info: {} | {} | {} | {} | {} ", mint,  timestamp(), create.name, create.symbol, create.user.to_string());  
+
+    conn.hset(TOKEN_SET_KEY, mint, info)
         .await
 }
+
+pub async fn query_token_info(conn: &mut MultiplexedConnection, mint: &str) -> RedisResult<String> {
+    match conn.hget::<_, _, String>(TOKEN_SET_KEY, mint).await {
+        Ok(info) => Ok(info),
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn from_pool_query_token_mint(conn: &mut MultiplexedConnection, pool: &str) -> RedisResult<String> {
+    
+    match conn.hgetall::<_, HashMap<String, String>>(TOKEN_SET_KEY).await {
+        Ok(result) => {
+            for (mint, info) in result {
+                let splits: Vec<_> = info.split("|").collect();
+                if splits.len() > 8 && splits[8] == pool.to_string() {
+                    return Ok(mint.to_string());
+                } 
+            }
+            Ok("".to_string())
+        },
+        Err(e) => Err(e),
+    }
+}
+
 
 pub async fn update_mk(
     conn: &mut MultiplexedConnection,
     mint: &str,
-    market_cap: f32,
-) -> RedisResult<()> {
+    market_cap: f64,
+    pool: &str,
+) -> RedisResult<()> { 
     match conn.hget::<_, _, String>(TOKEN_SET_KEY, mint).await {
         Ok(old_info) => {
             let splits: Vec<_> = old_info.split("|").collect();
 
             let (mint, create_time) = (splits[0], splits[2]);
-            let new_info = format!("{}|{}|{}|{}|{}|{}|{}|{}", mint, market_cap, create_time, splits[3], splits[4], splits[5], splits[6], splits[7]);
+            let new_info = format!("{}|{}|{}|{}|{}|{}|{}|{}|{}", mint, market_cap.to_string(), create_time, splits[3], splits[4], splits[5], splits[6], splits[7], pool.to_string());
             conn.hset(TOKEN_SET_KEY, mint, new_info).await
         } 
-        Err(_) => Ok(()),
+        Err(_) => Ok(()), 
     }
 }
 
 pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x_instance: XClient) -> RedisResult<()> {
-    // 获取所有数据
     match conn
         .hgetall::<'_, _, HashMap<String, String>>(TOKEN_SET_KEY)
         .await
@@ -50,45 +77,73 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x
             let mut tokens_to_exist = result.clone();
             for (_, info) in result {
                 let splits: Vec<_> = info.split("|").collect();
-                let (mint, mk, create_time) = (
-                    splits[0],
-                    splits[1].parse::<f32>().unwrap(),
-                    splits[2].parse::<u64>().unwrap(),
-                );
-
-                info!("check token create info: token addr {}, market cap {}, create time {}", mint, mk, create_time);
-
-                // 检查是否是新代币（创建时间不超过10分钟）
-                let is_new_coin = create_time + 600_000 > timestamp();
-                // 检查市值是否达标
-                let has_enough_market_cap = mk >= *MARKET_CAP;
-                
-                // 如果不是新代币，删除
-                if !is_new_coin {
-                    conn.hdel(TOKEN_SET_KEY, mint).await?;
-                    tokens_to_exist.remove(&mint.to_string());
+                if splits.len() != 9 {
+                    continue;
                 }
-                // 否则，如果是新代币但市值不够，也删除
-                else if !has_enough_market_cap {
-                    conn.hdel(TOKEN_SET_KEY, mint).await?;
-                    tokens_to_exist.remove(&mint.to_string());
+                let (mint, mk, create_time, _, _, _, _, _, _pool) = (
+                    splits[0], 
+                    splits[1].parse::<f32>().unwrap(),
+                    splits[2].parse::<u64>().unwrap(),  
+                    splits[3], 
+                    splits[4],
+                    splits[5],
+                    splits[6],
+                    splits[7],
+                    splits[8],
+                ); 
+                
+                // 只在NEW_COIN_MIN_TIME和NEW_COIN_MAX_TIME之间检查市值
+                let is_mid_age_coin = 
+                    create_time + NEW_COIN_MIN_TIME <= timestamp() && 
+                    create_time + NEW_COIN_MAX_TIME > timestamp();
+                
+                let has_enough_market_cap = mk >= *MARKET_CAP;
+
+                if !has_enough_market_cap {
+                    if is_mid_age_coin {
+                        // Remove token from Redis hash set
+                        conn.hdel(TOKEN_SET_KEY, mint).await?;
+                        
+                        // Remove from local tracking collection
+                        tokens_to_exist.remove(&mint.to_string());
+                        
+                        info!("Remove token from Redis: {} | {} | {}", mint, timestamp(), mk);
+                    }
                 }
             }
 
-            // 准备要处理的代币信息和相关状态
+            // Prepare tokens to process
             let mut tokens_to_process = Vec::new();
             
-            for (mint, info) in tokens_to_exist {
-                // 检查是否已经发送过警报
-                if !is_token_alert_sent(conn, &mint).await? {
-                    // 标记为已发送
-                    mark_token_alert_sent(conn, &mint).await?;
-                    // 添加到要处理的列表
+            for (mint, info) in tokens_to_exist { 
+                let splits: Vec<_> = info.as_str().split("|").collect();
+                if splits.len() != 9 {
+                    continue;
+                }
+                let (_, _, create_time, _, _, _, _, _, _) = (
+                    splits[0], 
+                    splits[1].parse::<f32>().unwrap(),
+                    splits[2].parse::<u64>().unwrap(), 
+                    splits[3],
+                    splits[4],
+                    splits[5],
+                    splits[6],
+                    splits[7],
+                    splits[8],
+                ); 
+                if splits[1].parse::<f32>().unwrap() > 0.0 {
+                    info!("checking ======> mint: {} | create_time: {} | mk: {}", mint, create_time, splits[1]);
+                }
+                // Check if token alert has already been sent
+                let mint_warning = format!("token_alert_sent:{}", mint);
+                if !is_token_alert_sent(conn, &mint_warning).await? && splits[1].parse::<f32>().unwrap() > *MARKET_CAP {
+                    // Mark as sent
+                    mark_token_alert_sent(conn, &mint_warning).await?;
+                    // Add to processing list
                     tokens_to_process.push((mint, info));
                 }
             }
-            
-            // 只有在有需要处理的代币时才启动异步任务
+
             if !tokens_to_process.is_empty() {
                 tokio::spawn(async move {
                     for (mint, info) in tokens_to_process {
@@ -103,7 +158,7 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x
                             splits[6],
                             splits[7],
                         );
-
+                        
                         // get token x info
                         let x_info = if let Ok(x_infos) = x_instance.search_tweets(&mint, None, Some("Top")).await {
                             x_infos.tweets.first().unwrap().clone()
@@ -132,7 +187,7 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x
                             launch_time: format_timestamp_to_et(create_time),
                         };
                         
-                        // 直接发送消息，不需要再次检查是否已发送
+                        // Directly send message, no need to check again
                         let _ = instance.send_coin_alert(&token_details).await;
                     }
                 });
@@ -145,13 +200,15 @@ pub async fn check_mk(conn: &mut MultiplexedConnection, instance: BotInstance, x
 }
 
 
-// 在Redis中存储已发送消息的代币标记
+
+// Store token alert status in Redis
 pub async fn mark_token_alert_sent(conn: &mut MultiplexedConnection, mint: &str) -> RedisResult<()> {
-    conn.set(format!("token_alert_sent:{}", mint), 1).await
+    conn.set(mint, 1).await  
 }
 
 pub async fn is_token_alert_sent(conn: &mut MultiplexedConnection, mint: &str) -> RedisResult<bool> {
-    conn.exists(format!("token_alert_sent:{}", mint)).await
+    // Check if token alert has already been sent
+    conn.exists(mint).await
 }
 
 #[cfg(test)]
@@ -170,7 +227,7 @@ mod test {
         let instance = get_instance();
         let redis = redis::Client::open(REDIS_URL.to_string())?;
         let mut con = redis.get_multiplexed_async_connection().await?;
-        // 1. 添加一个token info
+        // 1. Add a token info
         let mint = Pubkey::new_unique();
         add_token_info(
             &mut con,
@@ -185,10 +242,12 @@ mod test {
         )
         .await?;
 
-        // 2. 更新mk
-        update_mk(&mut con, &mint.to_string(), 100.0).await?;
+        let pool = "0x1234";
 
-        // 3. 停顿后检查
+        // 2. Update mk
+        update_mk(&mut con, &mint.to_string(), 100.0, pool).await?;
+
+        // 3. Pause and check
         sleep(Duration::from_secs(11));
         check_mk(&mut con, instance, get_x_instance()).await?;
 
@@ -196,12 +255,3 @@ mod test {
     }
 }
 
-/*
-
-用一个数组，记录当前检查过的所有代币信息，具体是 mint|mk|create_time
-
-当一笔交易进入，更新每个代币的mk
-
-每30s, 检查一次所有代币，只要create_time至今超过15分钟，并且mk还低于7000，则将该代币从redis中删除
-
-*/

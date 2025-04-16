@@ -1,6 +1,4 @@
-use std::{
-    collections::HashMap, sync::Arc
-};
+use std::sync::Arc;
 
 use futures_util::StreamExt;
 use redis::aio::MultiplexedConnection;
@@ -8,17 +6,17 @@ use reqwest::Client;
 use solana_client::nonblocking::rpc_client::RpcClient;
 use solana_transaction_status::{option_serializer::OptionSerializer, UiInnerInstructions, UiTransactionStatusMeta};
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{debug, info, trace};
 use yellowstone_grpc_proto::geyser::subscribe_update::UpdateOneof;
 
 use crate::{
     cache::{
-        add_token_info, check_mk, update_mk,
+        add_token_info, check_mk, from_pool_query_token_mint, query_token_info, update_mk
     }, client::GrpcClient, constants::{
-        GRPC, PUMPFUN_PROGRAM_ID, REDIS_URL, RPC,
+        GRPC, PUMPAMM_PROGRAM_ID, PUMPFUN_PROGRAM_ID, REDIS_URL, RPC
     }, tg_bot::tg_bot::get_instance, types::TargetEvent, utils::{
-        cal_pumpfun_marketcap, cal_pumpfun_price, convert_to_encoded_tx,
-    }, x::get_x_instance
+        cal_pumpamm_marketcap_precise, cal_pumpamm_price, cal_pumpfun_marketcap, cal_pumpfun_price, convert_to_encoded_tx
+    }, x::get_x_instance 
 };
 use anyhow::{Context, Result};
 
@@ -45,7 +43,7 @@ impl Monitor {
             transaction_lock: Arc::new(Mutex::new(())),
             redis: conn,
         })
-    }
+    } 
 
     pub async fn run(&self) -> Result<()> {
         // grpc
@@ -56,7 +54,7 @@ impl Monitor {
         let grpc = GrpcClient::new(grpc_url);
         let mut stream = grpc
             .subscribe_transaction(
-                vec![PUMPFUN_PROGRAM_ID.to_string()],
+                vec![PUMPAMM_PROGRAM_ID.to_string(), PUMPFUN_PROGRAM_ID.to_string()],
                 vec![],
                 vec![],
                 yellowstone_grpc_proto::geyser::CommitmentLevel::Confirmed,
@@ -64,7 +62,7 @@ impl Monitor {
             .await?;
 
         let mut block_times = 0;
-        // 接收消息
+
         // receive messages
         while let Some(Ok(sub)) = stream.next().await {
             if let Some(update) = sub.update_oneof {
@@ -87,7 +85,8 @@ impl Monitor {
                             .exec_async(&mut conn)
                             .await?;
                         if block_times == 100 {
-                            check_mk(&mut conn, tg_instance.clone(), x_instance.clone()).await?;
+                            debug!("check mk!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+                            check_mk(&mut conn, tg_instance.clone(), x_instance.clone()).await?; 
                             block_times = 0;
                         }
                     }
@@ -98,7 +97,6 @@ impl Monitor {
         Ok(())
     }
 
-    // 更新token info
     // update token info
     async fn update_token_info(
         &self,
@@ -111,7 +109,6 @@ impl Monitor {
         }
     }
 
-    // 检查内部指令
     // check instruction
     async fn check_instruction(
         &self,
@@ -119,83 +116,150 @@ impl Monitor {
     ) -> Result<()> {
         let mut conn = self.redis.clone();
 
-        let mut temp_price = HashMap::new();
+        // let mut temp_price = HashMap::new();
         for inner in inner_ixs {
             for ix in inner.instructions {
-                if let Ok(target_event) = TargetEvent::try_from(ix) {
+                if let Ok(target_event) = TargetEvent::try_from(ix.clone()) {
                     match target_event {
                         TargetEvent::PumpfunBuy(buy) => {
-                            // 基本数据
-                            // basic data
                             let sol_reserves = buy.virtual_sol_reserves;
                             let token_reserves = buy.virtual_token_reserves;
                             let price = cal_pumpfun_price(sol_reserves, token_reserves);
                             let market_cap = cal_pumpfun_marketcap(price);
-                            // info!("buy ===========> {:?}, {:?}, {:?}, {:?}, {:?}", buy.mint, sol_reserves, token_reserves, price, market_cap);
+                            update_mk(&mut conn, &buy.mint.to_string(), market_cap, &"".to_string()).await?;
+                            // // info!("buy ===========> {:?}, {:?}, {:?}, {:?}, {:?}", buy.mint, sol_reserves, token_reserves, price, market_cap);
 
-                            temp_price.insert(buy.mint, (price, market_cap));
+                            // temp_price.insert(buy.mint, (price, market_cap));
                         }
 
                         TargetEvent::PumpfunSell(sell) => {
-                            // 出现了出售，通道发送
-                            // sell occurred, channel sent
-                            // 基本数据
-                            // basic data
                             let sol_reserves = sell.virtual_sol_reserves;
                             let token_reserves = sell.virtual_token_reserves;
                             let price = cal_pumpfun_price(sol_reserves, token_reserves);
-                            let market_cap = cal_pumpfun_marketcap(price);
+                            let market_cap = cal_pumpfun_marketcap(price); 
+                            update_mk(&mut conn, &sell.mint.to_string(), market_cap, &"".to_string()).await?;
 
-                            temp_price.insert(sell.mint, (price, market_cap));
+                            // temp_price.insert(sell.mint, (price, market_cap));
                         }
 
                         TargetEvent::PumpfunCreate(create) => {
-                            let mint = create.mint;
-                            info!("create token info: {}", mint.to_string());
+                            // let mint = create.mint;
                             // 默认是没有
                             // default is false
-                            if mint.to_string().ends_with("pump") {
+                            // if mint.to_string().ends_with("pump") {
                                 // let have_x_or_tg = have_tg_or_x(&self.http, &mint.to_string())
                                 //     .await
                                 //     .unwrap_or(false); 
                                 // todo！ get token info
                                 add_token_info(&mut conn, &create).await?;
-                            }
+                            // }
                         }
 
                         TargetEvent::PumpfunComplete(_) => {
                             // safe delete
                         }
 
-                        TargetEvent::PumpammCreatePool(_) => {
-                            // TODO! 是否处理池子的创建 池子的创建应该暂时不需要处理
-                        }
+                        TargetEvent::PumpammCreatePool(pool_info) => {
+                            let pool = pool_info;
+                         
+                            // 该池子的base_mint必须在redis中存在
+                            if query_token_info(&mut conn, &pool.base_mint.to_string()).await.is_ok() {    
+                                debug!("create pool: {:?}", pool);
+                                let price = cal_pumpamm_price(pool.pool_base_amount, pool.pool_quote_amount);
+
+                                let market_cap = cal_pumpamm_marketcap_precise(price);
+                                debug!("create pool mint {} pool {} market cap: {}", pool.base_mint.to_string(), pool.pool.to_string(), market_cap);
+                                
+                                update_mk(&mut conn, &pool.base_mint.to_string(), market_cap, &pool.pool.to_string()).await?;
+                            } 
+                        } 
 
                         TargetEvent::PumpammBuy(buy) => {
+                            // println!("buy ===========> {:?}", buy);
                             // TODO! AMM buy
-                        }
+                            let buy_info = buy;
+                            if let Ok(mint) = from_pool_query_token_mint(&mut conn, &buy_info.pool.to_string()).await {   
+                                // 如果毕业的话则更新价格和市场市值
+                                // debug!("have token graduation");
+                                // debug!("buy_info = {:?}", buy_info);
+                                let price = cal_pumpamm_price(buy_info.pool_base_token_reserves, buy_info.pool_quote_token_reserves);
 
+                                let market_cap = cal_pumpamm_marketcap_precise(price);
+                                // debug!("buy mint {} pool {} price {} market cap: {}", mint, buy_info.pool.to_string(), price, market_cap);
+                                 
+                                update_mk(&mut conn, &mint, market_cap, &buy_info.pool.to_string()).await?;
+                            } else {
+                                continue;
+                            }
+                        } 
+ 
                         TargetEvent::PumpammSell(sell) => {
+                            // println!("sell ===========> {:?}", sell);
                             // TODO! AMM sell
-                        }
+                            let sell_info = sell; 
+                            if let Ok(mint) = from_pool_query_token_mint(&mut conn, &sell_info.pool.to_string()).await {   
+                                // 如果毕业的话则更新价格和市场市值
+                                // debug!("have token graduation");
+                                // debug!("sell_info = {:?}", sell_info);
+                                let price = cal_pumpamm_price(sell_info.pool_base_token_reserves, sell_info.pool_quote_token_reserves);
+
+                                let market_cap = cal_pumpamm_marketcap_precise(price);
+                                // debug!("sell mint {} pool {} market cap: {}", mint, sell_info.pool.to_string(), market_cap);
+                                 
+                                update_mk(&mut conn, &mint, market_cap, &sell_info.pool.to_string()).await?;
+                            } else {
+                                continue;
+                            }
+                        } 
 
                         TargetEvent::PumpammDeposit(deposit) => {
                             // TODO! AMM deposit
+                            // println!("deposit ===========> {:?}", deposit);
+                            if let Ok(mint) = from_pool_query_token_mint(&mut conn, &deposit.pool.to_string()).await {   
+                                // 如果毕业的话则更新价格和市场市值
+                                // debug!("have token graduation");
+                                // debug!("deposit_info = {:?}", deposit);
+                                let price = cal_pumpamm_price(deposit.pool_base_token_reserves, deposit.pool_quote_token_reserves);
+
+                                let market_cap = cal_pumpamm_marketcap_precise(price);
+                                // debug!("deposit mint {} pool {} market cap: {}", mint, deposit.pool.to_string(), market_cap);
+                                 
+                                update_mk(&mut conn, &mint, market_cap, &deposit.pool.to_string()).await?;
+                            } else {
+                                continue;
+                            }
                         }
 
                         TargetEvent::PumpammWithdraw(withdraw) => {
                             // TODO! AMM withdraw
+                            // println!("withdraw ===========> {:?}", withdraw);
+                            if let Ok(mint) = from_pool_query_token_mint(&mut conn, &withdraw.pool.to_string()).await {   
+                                // 如果毕业的话则更新价格和市场市值
+                                // debug!("have token graduation");
+                                // debug!("withdraw_info = {:?}", withdraw);
+                                let price = cal_pumpamm_price(withdraw.pool_base_token_reserves, withdraw.pool_quote_token_reserves);
+
+                                let market_cap = cal_pumpamm_marketcap_precise(price);
+                                // debug!("withdraw mint {} pool {} market cap: {}", mint, withdraw.pool.to_string(), market_cap);
+                                 
+                                update_mk(&mut conn, &mint, market_cap, &withdraw.pool.to_string()).await?;
+                            } else {
+                                continue;
+                            }
                         }
                         _ => todo!()
                     }
                 }
+                //  else {
+                //     println!("ix ===========> {:?}", ix);
+                // }
             }
         }
 
-        for (key, (_, mk)) in temp_price {
-            // update marketcap
-            update_mk(&mut conn, &key.to_string(), mk).await?;
-        }
+        // for (key, (_, mk)) in temp_price {
+        //     // update marketcap
+        //     update_mk(&mut conn, &key.to_string(), mk).await?;
+        // } 
 
         Ok(())
     }

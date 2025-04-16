@@ -99,7 +99,7 @@ impl BotInstance {
 • *Mint:* `{mint_address}`
 
 📊 *Market Info*
-• *Market Cap:* `${market_cap}`
+• *Market Cap:* `{market_cap} SOL`
 • *Creator:* `{creator}`
 • *Launch:* `{launch_time}`
 

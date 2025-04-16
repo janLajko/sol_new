@@ -18,7 +18,7 @@ pub static MARKET_CAP: Lazy<f32> = Lazy::new(|| {
         .unwrap_or(50000.0)
 }); 
 
-// program相关
+
 // program related
 pub const SYSTEM_PROGRAM_ID: Pubkey = pubkey!("11111111111111111111111111111111");
 pub const SYSTEM_RENT_PROGRAM_ID: Pubkey = pubkey!("SysvarRent111111111111111111111111111111111");
@@ -36,8 +36,16 @@ pub const INIT_SOL_REVERSES: u64 = 30_000_000_000;
 pub const INIT_TOKEN_REVERSES: u64 = 1_073_000_191_000_000;
 pub const INIT_PRICE: f32 = (INIT_SOL_REVERSES as f32 / 1e9) / (INIT_TOKEN_REVERSES as f32 / 1e6);
 pub const PUMPFUN_TOTAL_SUPPLY: u64 = 1_000_000_000_000_000;
+
+pub const PUMPAMM_PROGRAM_ID: Pubkey = pubkey!("pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA");
  
-// 标量
 // scalars
 pub const MINUTES: u64 = 60 * 1000;
 pub const SECONDS: u64 = 1000;
+
+// Tokens
+pub const WSOL: Pubkey = pubkey!("So11111111111111111111111111111111111111112");
+ 
+// Time
+pub const NEW_COIN_MIN_TIME: u64 = 10 * 60 * 1000; // 10分钟 (以毫秒为单位)
+pub const NEW_COIN_MAX_TIME: u64 = 15 * 60 * 1000; // 15分钟 (以毫秒为单位)

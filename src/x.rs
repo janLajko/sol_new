@@ -1,6 +1,6 @@
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
-use reqwest::{Client as ReqwestClient, StatusCode, header};
+use reqwest::Client as ReqwestClient;
 use thiserror::Error;
 
 /// Twitter API error types

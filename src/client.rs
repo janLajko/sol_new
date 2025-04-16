@@ -11,19 +11,17 @@ use yellowstone_grpc_proto::{
     tonic::Status,
 };
 
-/// grpc需要的交易过滤map
-///  Add English annotation translation
 /// transactions filter map 
 type TransactionsFilterMap = HashMap<String, SubscribeRequestFilterTransactions>;
-/// grpc需要的区块过滤map
+
 /// blocks filter map
 type BlocksFilterMap = HashMap<String, SubscribeRequestFilterBlocks>;
-/// grpc需要的账户过滤map
+
 /// account filter map
 type AccountFilterMap = HashMap<String, SubscribeRequestFilterAccounts>;
 /// blockhash filter map
 type BlockMetaFilterMap = HashMap<String, SubscribeRequestFilterBlocksMeta>;
-/// grpc结构体，参数仅有 url
+
 /// grpc structure, parameters only url
 pub struct GrpcClient {
     endpoint: String,
@@ -95,7 +93,6 @@ impl GrpcClient {
             .connect()
             .await?;
 
-        // 过滤规则
         // filter rules
         let mut transactions: TransactionsFilterMap = HashMap::new();
         transactions.insert(
@@ -120,8 +117,6 @@ impl GrpcClient {
             ..Default::default()
         };
 
-        // 返回流
-        // return stream
         let (_, stream) = client
             .subscribe_with_request(Some(subscribe_request))
             .await?;
@@ -141,7 +136,7 @@ impl GrpcClient {
             .timeout(Duration::from_secs(60))
             .connect()
             .await?;
-        // 过滤规则
+
         // filter rules
         let mut accounts: AccountFilterMap = HashMap::new();
         accounts.insert(
@@ -161,7 +156,6 @@ impl GrpcClient {
             ..Default::default()
         };
 
-        // 返回流
         // return stream
         let (_, stream) = client
             .subscribe_with_request(Some(subscribe_request))
@@ -170,7 +164,6 @@ impl GrpcClient {
         Ok(stream)
     }
 
-    /// 获取最新的blockhash
     /// Get latest blockhash
     pub async fn get_latest_blockhash(&self) -> Result<String> {
         let mut client = GeyserGrpcClient::build_from_shared(self.endpoint.clone())?

@@ -9,7 +9,7 @@ use solana_sdk::pubkey::Pubkey;
 use solana_transaction_status::{EncodedTransactionWithStatusMeta, UiTransactionEncoding};
 use yellowstone_grpc_proto::{convert_from, geyser::SubscribeUpdateTransactionInfo};
 
-use crate::constants::PUMPFUN_PROGRAM_ID;
+use crate::{constants::PUMPFUN_PROGRAM_ID, types::CreateEvent};
 pub fn convert_to_encoded_tx(
     tx_info: SubscribeUpdateTransactionInfo,
 ) -> Result<EncodedTransactionWithStatusMeta> {
@@ -19,24 +19,54 @@ pub fn convert_to_encoded_tx(
         .map_err(|e| anyhow!("{}", e))
 }
 
-pub fn cal_pumpfun_price(virtual_sol_reserves: u64, virtual_token_reserves: u64) -> f32 {
-    (virtual_sol_reserves as f32 / 10f32.powi(9)) / (virtual_token_reserves as f32 / 10f32.powi(6))
+pub fn cal_pumpfun_price(virtual_sol_reserves: u64, virtual_token_reserves: u64) -> f64 {
+    (virtual_sol_reserves as f64 / 10f64.powi(9)) / (virtual_token_reserves as f64 / 10f64.powi(6))
 }
 
-pub fn cal_pumpfun_marketcap(price: f32) -> f32 {
-    price * 1_000_000_000_000.0
+pub fn cal_pumpfun_marketcap(price: f64) -> f64 {
+    price * 1_000_000_000.0
+}
+
+// base_reserve -> meme
+// quote_reserve -> WSOL
+
+const WSOL_DECIMALS: u8 = 9;
+const TOKEN_DECIMALS: u8 = 6;
+
+pub fn cal_pumpamm_price(
+    base_reserves: u64,
+    quote_reserves: u64,
+) -> f64 {
+    let base = base_reserves as f64 / 10f64.powi(TOKEN_DECIMALS as i32);
+    let quote = quote_reserves as f64 / 10f64.powi(WSOL_DECIMALS as i32);
+    if base == 0.0 {
+        return 0.0; 
+    }
+    quote / base
+}
+
+pub fn cal_pumpamm_marketcap_precise( 
+    price: f64,
+) -> f64 {
+    price * 1_000_000_000.0 
 }
 
 
-pub fn cal_pumpamm_price(base_reserves: u64, quote_reserves: u64) -> f32 {
-    todo!() 
-}
 
-// 拿到池子中的流动性 
-pub fn cal_pumpamm_marketcap(price: f32) -> f32 {
-    todo!()
-}
+pub fn get_pumpamm_base_mint_info(create_event: &CreateEvent) -> Vec<(Pubkey, u8)> {
+    // let base_token = if pool.base_mint == WSOL {
+    //     pool.quote_mint
+    // } else {
+    //     pool.base_mint
+    // };
+    // let quote_token = if pool.base_mint == WSOL {
+    //     pool.quote_mint
+    // } else {
+    //     pool.base_mint
+    // };
 
+    vec![]
+}
 pub async fn have_tg_or_x(client: &Client, mint: &str) -> Result<bool> {
     let response = client
         .get(format!(

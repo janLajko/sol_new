@@ -57,6 +57,21 @@ impl TryFrom<UiInstruction> for TargetEvent {
                         return Ok(TargetEvent::PumpfunSell(trade));
                     }
                 }
+                if let Some(amm_buy) = AMMBuyEvent::try_from_compiled_instruction(&ui_compiled_instruction) {
+                    return Ok(TargetEvent::PumpammBuy(amm_buy));
+                }
+                if let Some(amm_sell) = AMMSellEvent::try_from_compiled_instruction(&ui_compiled_instruction) {
+                    return Ok(TargetEvent::PumpammSell(amm_sell));
+                }
+                if let Some(amm_deposit) = AMMDepositEvent::try_from_compiled_instruction(&ui_compiled_instruction) {
+                    return Ok(TargetEvent::PumpammDeposit(amm_deposit));
+                }
+                if let Some(amm_withdraw) = AMMWithdrawEvent::try_from_compiled_instruction(&ui_compiled_instruction) {
+                    return Ok(TargetEvent::PumpammWithdraw(amm_withdraw));
+                }
+                if let Some(amm_create_pool) = AMMCreatePoolEvent::try_from_compiled_instruction(&ui_compiled_instruction) {
+                    return Ok(TargetEvent::PumpammCreatePool(amm_create_pool));
+                }
             }
             _ => {}
         }
@@ -213,7 +228,7 @@ pub struct TradeEvent {
     pub timestamp: i64,
     pub virtual_sol_reserves: u64,
     pub virtual_token_reserves: u64,
-    pub real_sol_reserves: u64,
+    pub real_sol_reserves: u64, 
     pub real_token_reserves: u64,
 }
 
@@ -251,7 +266,7 @@ pub struct AMMBuyEvent {
     pub protocol_fee: u64,
     pub quote_amount_in_with_lp_fee: u64,
     pub user_quote_amount_in: u64,
-    pub pool: Pubkey,
+    pub pool: Pubkey, 
     pub user: Pubkey,
     pub user_base_token_account: Pubkey,
     pub user_quote_token_account: Pubkey,
